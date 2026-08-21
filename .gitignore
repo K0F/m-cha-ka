@@ -9,3 +9,7 @@ tj
 
 # Session transcripts
 session-ses_*.md
+
+# Render plans and concat lists
+*.edl
+*_concat.txt

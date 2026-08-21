@@ -91,6 +91,68 @@ The plan files are plain tj EDLs — edit one by hand and render it directly:
 | `pulse` | beat-driven from the start, steady accent density (10×600 s) |
 | `rupture` | alternating dense/sparse movements (parity boost/cut, 8×450 s) |
 
+### Examples
+
+First full run, then reproduce it exactly:
+
+```sh
+./michacka
+# ... Done! Output: michacka_day_120min_mix.{wav,flac,mp3}
+#     Reproduce with: --seed 1753119601
+./michacka --seed 1753119601          # identical plan, byte-for-byte mix
+```
+
+Quick smoke test — tiny sample of each library, plan only (no audio):
+
+```sh
+./michacka --dry-run --limit 8 --parts 4 --seed 42 --out demo_day
+```
+
+```text
+=== michacka ===
+style: day | parts: 4 x 600 s | seed: 42
+tj: ../tj/tj
+libraries:
+  music: 6 files
+  field: 3 files
+analyzing (tj cache):
+  music: analyzed 6/6
+  field: analyzed 3/3
+texture roles: ambient=8 motion=1 pulse=0
+planning movements:
+  part 01: phase 0.00 | music 2 (bed2/motion1/pulse0) | field 2 | arc 0:0.85,150:0.95,300:1.00,450:0.93,600:0.86
+  part 02: phase 0.33 | music 1 (bed1/motion2/pulse3) | field 3 | arc 0:0.85,150:0.90,300:1.00,450:0.92,600:0.88
+  part 03: phase 0.67 | music 1 (bed1/motion3/pulse2) | field 3 | arc 0:0.88,150:0.96,300:1.00,450:0.94,600:0.86
+  part 04: phase 1.00 | music 2 (bed2/motion1/pulse0) | field 3 | arc 0:0.81,150:0.94,300:1.00,450:0.95,600:0.83
+dry-run: EDLs written, no audio rendered.
+```
+
+A style tour — one command per mood:
+
+```sh
+./michacka --style storm               # fast ramp into dense layers, abrupt end
+./michacka --style drift               # sparse ambient washes, very long fades
+./michacka --style pulse --bpm         # beat-driven, snapped to the grid
+./michacka --style rupture --bpm --keylock   # dense/sparse alternation, one key
+./michacka --style day --jobs 8        # render movements in parallel
+```
+
+Custom libraries and output name:
+
+```sh
+./michacka --mus ~/music/flac --fld ~/field/2026 --out summer_2026
+```
+
+Each plan is a plain tj EDL — comma-separated entries of
+`in SLICE_OUT at POSITION v GAIN_dB fin FADE fout FADE FILE`:
+
+```text
+in0.1 out18.1 at0.0 v-12 fin18.6 fout18.4 ~/recordings/pulse_kick.wav,
+in1.0 out28.0 at0.0 v-12 fin23.5 fout19.4 ~/recordings/motion_trem.wav
+```
+
+Edit one by hand and render it directly with tj (see above).
+
 ## Output files
 
 Per run with prefix `P`:

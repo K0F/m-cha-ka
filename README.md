@@ -65,15 +65,15 @@ The plan files are plain tj EDLs — edit one by hand and render it directly:
 
 | Option | Meaning | Default |
 |---|---|---|
+| `[MUS_DIR]` | music library (positional or `--mus`) | `~/recordings` |
+| `[FLD_DIR]` | field-recording library (positional or `--fld`) | `/mnt/data/recordings/field` |
 | `--seed N` | RNG seed (printed when auto-generated) | random |
 | `--parts N` | number of movements | style default |
 | `--part-len SEC` | nominal length of each movement | style default |
 | `--style NAME` | `day` `storm` `drift` `pulse` `rupture` | `day` |
-| `--mus DIR` | music library | `~/recordings` |
-| `--fld DIR` | field-recording library | `/mnt/data/recordings/field` |
 | `--tj PATH` | tj renderer binary (env `MICHACKA_TJ`); runs `make -s -C ../tj` if missing | `../tj/tj` |
 | `--out PREFIX` | output file prefix | `michacka_<style>_<min>min` |
-| `--limit N` | use only N sampled files per library | all |
+| `--limit N` | use only N sampled files per library | 1000 for large libs |
 | `--bpm` | beat-match music pass (tj `--bpm auto --snap`) | off |
 | `--keylock` | transpose music pass to shared key | off |
 | `--no-master` | skip the mastering pass | mastering on (`subtle`) |
@@ -140,7 +140,7 @@ A style tour — one command per mood:
 Custom libraries and output name:
 
 ```sh
-./michacka --mus ~/music/flac --fld ~/field/2026 --out summer_2026
+./michacka ~/music/flac ~/field/2026 --out summer_2026
 ```
 
 Each plan is a plain tj EDL — comma-separated entries of

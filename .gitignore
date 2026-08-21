@@ -1,0 +1,11 @@
+# Rendered audio and analysis artifacts
+*.wav
+*.flac
+*.mp3
+
+# Built binaries
+michacka
+tj
+
+# Session transcripts
+session-ses_*.md

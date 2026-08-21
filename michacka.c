@@ -89,6 +89,7 @@ typedef struct {
     int dry_run;
     int force;
     int limit;
+    int limit_given;
 } Cfg;
 
 static void die(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));
@@ -772,12 +773,18 @@ static void finish_mix(const Cfg *cfg)
     }
 }
 
-static void load_library(TrackList *lib, const char *dir, const char *label, int limit)
+static void load_library(TrackList *lib, const char *dir, const char *label, int limit, int limit_given)
 {
     char **paths = NULL;
     int n = 0, cap = 0;
     scan_dir_rec(dir, &paths, &n, &cap);
     if (n == 0) die("no audio files found in %s (%s)", dir, label);
+    
+    if (!limit_given && n > 1000) {
+        limit = 1000;
+        printf("  %s: found %d files, auto-limiting to %d (use --limit to override)\n", label, n, limit);
+    }
+    
     int keep = n;
     if (limit > 0 && limit < n) {
         int *idx = xmalloc(sizeof(int) * (size_t)n);
@@ -822,7 +829,7 @@ static void usage(const char *prog)
             "  --fld DIR         field-recording library (default /mnt/data/recordings/field)\n"
             "  --tj PATH         path to tj renderer (default ../tj/tj, env MICHACKA_TJ)\n"
             "  --out PREFIX      output prefix (default michacka_<style>_<min>min)\n"
-            "  --limit N         sample only N files per library (quick experiments)\n"
+            "  --limit N         sample only N files per library (defaults to 1000 for big libs)\n"
             "  --bpm             beat-match the music pass (tj --bpm auto --snap)\n"
             "  --keylock         transpose the music pass to a shared key (tj --keylock auto)\n"
             "  --no-master       skip the mastering pass on movement renders\n"
@@ -874,6 +881,7 @@ int main(int argc, char *argv[])
         } else if (strcmp(a, "--limit") == 0) {
             if (i + 1 >= argc) die("--limit requires a value");
             cfg.limit = atoi(argv[++i]);
+            cfg.limit_given = 1;
         } else if (strcmp(a, "--jobs") == 0) {
             if (i + 1 >= argc) die("--jobs requires a value");
             cfg.jobs = atoi(argv[++i]);
@@ -925,8 +933,8 @@ int main(int argc, char *argv[])
     printf("libraries:\n");
 
     TrackList mus = { 0 }, fld = { 0 };
-    load_library(&mus, cfg.mus_dir, "music", cfg.limit);
-    load_library(&fld, cfg.fld_dir, "field", cfg.limit);
+    load_library(&mus, cfg.mus_dir, "music", cfg.limit, cfg.limit_given);
+    load_library(&fld, cfg.fld_dir, "field", cfg.limit, cfg.limit_given);
 
     printf("analyzing (tj cache):\n");
     analyze_lib(cfg.tj_path, &mus, "music");

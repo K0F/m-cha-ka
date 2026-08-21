@@ -73,7 +73,7 @@ The plan files are plain tj EDLs — edit one by hand and render it directly:
 | `--fld DIR` | field-recording library | `/mnt/data/recordings/field` |
 | `--tj PATH` | tj renderer binary (env `MICHACKA_TJ`); runs `make -s -C ../tj` if missing | `../tj/tj` |
 | `--out PREFIX` | output file prefix | `michacka_<style>_<min>min` |
-| `--limit N` | use only N sampled files per library | all |
+| `--limit N` | use only N sampled files per library | 1000 for large libs |
 | `--bpm` | beat-match music pass (tj `--bpm auto --snap`) | off |
 | `--keylock` | transpose music pass to shared key | off |
 | `--no-master` | skip the mastering pass | mastering on (`subtle`) |

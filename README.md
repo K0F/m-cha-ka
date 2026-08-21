@@ -153,6 +153,34 @@ in1.0 out28.0 at0.0 v-12 fin23.5 fout19.4 ~/recordings/motion_trem.wav
 
 Edit one by hand and render it directly with tj (see above).
 
+## Tests
+
+```sh
+make test
+```
+
+Builds and runs `test_michacka` — a self-contained harness that compiles
+`michacka.c` directly (`#define main michacka_main` + `#include`) so every
+`static` function is reachable. It covers the pure planning logic:
+
+- RNG: seeded determinism, `rnd_unit` / `rnd_range` bounds, shuffle preserves
+  permutations
+- classification: `role_for` label overrides and density/pulse/steady thresholds
+- envelopes: `env_eval` interpolation, clamping, empty/single/duplicate-point
+  edge cases; `layer_count` rupture parity alternation
+- geometry: `pick_slice` span/in-point bounds, short-track rejection
+- strings: `has_audio_ext`, `sh_quote` escaping (`"` `\` `$` `` ` ``),
+  `path_tail`
+- EDL building: `edl_put` comma-joining, count tracking, buffer growth past the
+  initial 16 KB cap; `build_arc` 5-point format
+- lookup: `find_track` exact-path and filename-tail matching, `collect_roles`
+
+It also exercises the CLI end-to-end (`--help` exit code, rejection of unknown
+options/styles and out-of-range `--part-len`/`--parts`/`--jobs`), which needs
+no tj or audio libraries since validation happens first.
+
+Full-render smoke testing stays manual — see the dry-run example above.
+
 ## Output files
 
 Per run with prefix `P`:
@@ -178,6 +206,7 @@ before dumping). Míchačka restores the full plan files after rendering, so the
 ## Repo layout
 
 ```
-michacka.c   single-file C program (the whole composer)
-Makefile     gcc michacka.c -O2 -Wall
+michacka.c       single-file C program (the whole composer)
+test_michacka.c  unit tests for the planning logic + CLI checks
+Makefile         gcc michacka.c -O2 -Wall; `make test` runs the suite
 ```

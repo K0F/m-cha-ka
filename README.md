@@ -33,12 +33,16 @@ scan libraries ──► tj analyze ──► classify texture ──► plan mo
    ≤ 30 entries per EDL (tj caps at 32), positive spans, no overflow past the
    movement end.
 4. **Render** — two passes per movement, mirroring `tj`'s day-cycle workflow:
-   - *pass A*: music EDL → `partNN_music.wav` (optionally `--bpm auto --snap`
-     and/or `--keylock auto`)
+   - *pass A*: music EDL → `partNN_music.wav`, with the style's generated
+     master `--arc` and 0.5 s / 2 s global fades; optionally `--bpm auto
+     --snap` (`--bpm`) and/or `--keylock auto` (`--keylock`)
    - *pass B*: rendered music as bed + field-recordings overlay (always native
-     speed) → `--master subtle` → `partNN_master.wav`
+     speed) → `partNN_master.wav` via `--master subtle`
 5. **Finish** — lossless concat of all parts, FLAC/MP3 exports, ffprobe
    duration verification.
+
+Movements land slightly under their nominal length (a 2 s safety margin plus
+fade tails); the concat step handles variable part lengths losslessly.
 
 ## Usage
 
@@ -51,6 +55,11 @@ make
 
 Re-run with the printed `--seed N` to reproduce a mix byte-for-byte in its EDL
 plan (audio rendering is deterministic given identical inputs and tj flags).
+The plan files are plain tj EDLs — edit one by hand and render it directly:
+
+```sh
+../tj/tj "$(cat P_part01_music.edl)" my_take.wav --bpm auto --snap --keylock auto
+```
 
 ### Options
 
@@ -62,12 +71,12 @@ plan (audio rendering is deterministic given identical inputs and tj flags).
 | `--style NAME` | `day` `storm` `drift` `pulse` `rupture` | `day` |
 | `--mus DIR` | music library | `~/recordings` |
 | `--fld DIR` | field-recording library | `/mnt/data/recordings/field` |
-| `--tj PATH` | tj renderer binary (env `MICHACKA_TJ`) | `../tj/tj` |
+| `--tj PATH` | tj renderer binary (env `MICHACKA_TJ`); runs `make -s -C ../tj` if missing | `../tj/tj` |
 | `--out PREFIX` | output file prefix | `michacka_<style>_<min>min` |
 | `--limit N` | use only N sampled files per library | all |
 | `--bpm` | beat-match music pass (tj `--bpm auto --snap`) | off |
 | `--keylock` | transpose music pass to shared key | off |
-| `--no-master` | skip the mastering pass | on (subtle) |
+| `--no-master` | skip the mastering pass | mastering on (`subtle`) |
 | `--jobs N` | render movements in parallel | 1 |
 | `--dry-run` | write EDLs only, no audio | off |
 | `--force` | re-render existing movements | skip |
@@ -99,8 +108,9 @@ before dumping). Míchačka restores the full plan files after rendering, so the
 ## Requirements
 
 - `gcc`, GNU make
-- [`../tj`](../tj) built (`make -C ../tj`) — which needs `ffmpeg`,
-  `soundstretch`, `keyfinder-cli`, `aubioonset`
+- [`../tj`](../tj) — Míchačka auto-builds it (`make -s -C ../tj`) when the
+  binary is missing; tj itself needs `ffmpeg`, `soundstretch`, `keyfinder-cli`,
+  `aubioonset`
 - `ffprobe` (duration verification)
 
 ## Repo layout

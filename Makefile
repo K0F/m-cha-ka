@@ -10,7 +10,7 @@ test: michacka
 	@echo "Running basic tests..."
 	@mkdir -p test_env/mus test_env/fld
 	@touch test_env/mus/track1.wav test_env/fld/env1.wav
-	@./michacka --dry-run --parts 1 --part-len 20 --mus test_env/mus --fld test_env/fld --out test_dryrun > /dev/null 2>&1
+	@./michacka --dry-run --parts 1 --part-len 20 --out test_dryrun test_env/mus test_env/fld > /dev/null 2>&1
 	@if [ -f test_dryrun_part01_music.edl ] && [ -f test_dryrun_part01_field.edl ]; then \
 		echo "Test passed: EDL files generated successfully."; \
 		rm -rf test_env test_dryrun_*; \

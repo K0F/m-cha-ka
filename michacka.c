@@ -816,7 +816,7 @@ static void load_library(TrackList *lib, const char *dir, const char *label, int
 static void usage(const char *prog)
 {
     fprintf(stderr,
-            "Usage: %s [options]\n"
+            "Usage: %s [options] [MUS_DIR] [FLD_DIR]\n"
             "\n"
             "Generative composition driver: plans layered movements, emits EDLs,\n"
             "and renders them through the tj compositing tool.\n"
@@ -825,8 +825,8 @@ static void usage(const char *prog)
             "  --parts N         number of movements (style default)\n"
             "  --part-len SEC    length of each movement in seconds (style default)\n"
             "  --style NAME      day | storm | drift | pulse | rupture (default day)\n"
-            "  --mus DIR         music library (default ~/recordings)\n"
-            "  --fld DIR         field-recording library (default /mnt/data/recordings/field)\n"
+            "  MUS_DIR, --mus    music library (default ~/recordings)\n"
+            "  FLD_DIR, --fld    field-recording library (default /mnt/data/recordings/field)\n"
             "  --tj PATH         path to tj renderer (default ../tj/tj, env MICHACKA_TJ)\n"
             "  --out PREFIX      output prefix (default michacka_<style>_<min>min)\n"
             "  --limit N         sample only N files per library (defaults to 1000 for big libs)\n"
@@ -891,6 +891,11 @@ int main(int argc, char *argv[])
         else if (strcmp(a, "--dry-run") == 0) cfg.dry_run = 1;
         else if (strcmp(a, "--force") == 0) cfg.force = 1;
         else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) { usage(argv[0]); return 0; }
+        else if (a[0] != '-') {
+            if (!cfg.mus_dir) cfg.mus_dir = xstrdup(a);
+            else if (!cfg.fld_dir) cfg.fld_dir = xstrdup(a);
+            else die("unexpected positional argument '%s'", a);
+        }
         else die("unknown option '%s' (try --help)", a);
     }
 

@@ -26,7 +26,8 @@ scan libraries → tj analyze → classify texture → plan movements → EDLs �
    check. Intermediate renders are deleted automatically.
 
 Default runs are 10 minutes (one 600 s movement); `--parts N` extends a style
-into its full multi-movement arc.
+into its full multi-movement arc, and `--len DUR` sets the per-movement
+length (`600`, `90s`, `15min`, `1h30m` — bare numbers are seconds).
 
 ## Usage
 
@@ -44,8 +45,9 @@ an identical plan (and byte-for-byte mix given identical inputs).
 
 ### Config
 
-Libraries and the tj binary come from `~/.config/michacka.conf` (also honors
-`XDG_CONFIG_HOME`), created on demand:
+Libraries and the tj binary come from a conf file (created on demand),
+resolved in order: `$MICHACKA_CONF` → `$XDG_CONFIG_HOME/michacka.conf` →
+`~/.config/michacka.conf`:
 
 ```ini
 mus=~/recordings              # music library
@@ -59,13 +61,14 @@ The tj path resolves in order: `MICHACKA_TJ` env → conf → `tj/tj` submodule
 
 ### Options
 
-| Argument | Meaning | Default |
-|---|---|---|
-| `[STYLE]` | `day` `storm` `drift` `pulse` `rupture` | `day` |
-| `[SEED]` | RNG seed | random |
-| `--parts N` | number of movements | style default |
-| `--out PREFIX` | output file prefix | `michacka_<style>_<min>min` |
-| `--dry-run` | write EDLs only, no audio | off |
+| Argument | Short | Meaning | Default |
+|---|---|---|---|
+| `[STYLE]` | | `day` `storm` `drift` `pulse` `rupture` | `day` |
+| `[SEED]` | | RNG seed | random |
+| `--parts N` | `-p N` | number of movements | style default |
+| `--len DUR` | `-l DUR` | per-movement length in seconds or `90s` / `15min` / `1h30m` | style default |
+| `--out PREFIX` | `-o PREFIX` | output file prefix | `michacka_<style>_<min>min` |
+| `--dry-run` | `-n` | write EDLs only, no audio | off |
 
 ### Styles
 
@@ -102,6 +105,7 @@ Quick smoke test without audio:
 
 ```sh
 ./michacka storm --parts 4 --seed 42 --dry-run --out demo
+./michacka drift --parts 2 --len "45min"   # 2 x 45 min movements
 ```
 
 ## Output files

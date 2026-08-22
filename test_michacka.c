@@ -296,6 +296,25 @@ static void test_style_defaults(void)
     CHECK(STYLES[ST_STORM].bpm == 0 && STYLES[ST_DRIFT].bpm == 0);
 }
 
+static void test_parse_len(void)
+{
+    CHECK_CLOSE(parse_len("600"), 600);
+    CHECK_CLOSE(parse_len("90s"), 90);
+    CHECK_CLOSE(parse_len("10m"), 600);
+    CHECK_CLOSE(parse_len("10min"), 600);
+    CHECK_CLOSE(parse_len("10MIN"), 600);
+    CHECK_CLOSE(parse_len("1H"), 3600);
+    CHECK_CLOSE(parse_len("1.5h"), 5400);
+    CHECK_CLOSE(parse_len("1h10m"), 4200);
+    CHECK_CLOSE(parse_len("1h 10min"), 4200);
+    CHECK(parse_len("") < 0);
+    CHECK(parse_len("   ") < 0);
+    CHECK(parse_len("abc") < 0);
+    CHECK(parse_len("-5") < 0);
+    CHECK(parse_len("1x") < 0);
+    CHECK(parse_len("1h bogus") < 0);
+}
+
 static void test_cli(void)
 {
     CHECK(run_cli("--help") == 0);
@@ -307,6 +326,14 @@ static void test_cli(void)
     CHECK(run_cli("day abc") != 0);
     CHECK(run_cli("day 42 extra") != 0);
     CHECK(run_cli("--parts 97") != 0);
+    CHECK(run_cli("--len") != 0);
+    CHECK(run_cli("--len abc") != 0);
+    CHECK(run_cli("--len 0") != 0);
+    CHECK(run_cli("--len 100000") != 0);
+    CHECK(run_cli("-p") != 0);
+    CHECK(run_cli("-l") != 0);
+    CHECK(run_cli("-l abc") != 0);
+    CHECK(run_cli("-o") != 0);
 }
 
 int main(void)
@@ -322,6 +349,7 @@ int main(void)
     test_env_eval();
     test_style_by_name();
     test_style_defaults();
+    test_parse_len();
     test_layer_count_parity();
     test_find_and_collect();
     test_pick_slice();

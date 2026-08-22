@@ -78,6 +78,7 @@ typedef struct {
     uint64_t seed;
     int have_seed;
     int parts;
+    double len;
     int style;
     const char *mus_dir;
     const char *fld_dir;
@@ -804,15 +805,49 @@ static void expand_tilde(char *dst, size_t cap, const char *val)
     }
 }
 
+static double parse_len(const char *s)
+{
+    double total = 0;
+    int seen = 0;
+    while (*s) {
+        while (isspace((unsigned char)*s)) s++;
+        if (!*s) break;
+        char *end;
+        errno = 0;
+        double v = strtod(s, &end);
+        if (end == s || !isfinite(v) || v < 0) return -1;
+        s = end;
+        while (isspace((unsigned char)*s)) s++;
+        double mult = 1.0;
+        if (isalpha((unsigned char)*s)) {
+            switch (tolower((unsigned char)*s)) {
+            case 'h': mult = 3600.0; break;
+            case 'm': mult = 60.0; break;
+            case 's': mult = 1.0; break;
+            default: return -1;
+            }
+            while (isalpha((unsigned char)*s)) s++;
+        }
+        total += v * mult;
+        seen = 1;
+    }
+    return (seen && isfinite(total)) ? total : -1.0;
+}
+
 static void load_conf(Cfg *cfg)
 {
     char path[1024];
-    const char *xdg = getenv("XDG_CONFIG_HOME");
-    if (xdg && xdg[0])
-        snprintf(path, sizeof(path), "%s/michacka.conf", xdg);
+    const char *ovr = getenv("MICHACKA_CONF");
+    if (ovr && ovr[0])
+        snprintf(path, sizeof(path), "%s", ovr);
     else {
-        const char *home = getenv("HOME");
-        snprintf(path, sizeof(path), "%s/.config/michacka.conf", home ? home : ".");
+        const char *xdg = getenv("XDG_CONFIG_HOME");
+        if (xdg && xdg[0])
+            snprintf(path, sizeof(path), "%s/michacka.conf", xdg);
+        else {
+            const char *home = getenv("HOME");
+            snprintf(path, sizeof(path), "%s/.config/michacka.conf", home ? home : ".");
+        }
     }
     FILE *fp = fopen(path, "r");
     if (!fp) return;
@@ -853,9 +888,11 @@ static void usage(const char *prog)
             "\n"
             "  STYLE             day | storm | drift | pulse | rupture (default day)\n"
             "  SEED              RNG seed (default: random, printed for reproduction)\n"
-            "  --parts N         number of movements (style default)\n"
-            "  --out PREFIX      output prefix (default michacka_<style>_<min>min)\n"
-            "  --dry-run         plan + write EDLs only, no audio\n"
+            "  -p, --parts N     number of movements (style default)\n"
+            "  -l, --len DUR     per-movement length: 600 | 90s | 15min | \"1h 10min\"\n"
+            "                    (style default; max 86400)\n"
+            "  -o, --out PREFIX  output prefix (default michacka_<style>_<min>min)\n"
+            "  -n, --dry-run     plan + write EDLs only, no audio\n"
             "  -h, --help        this help\n"
             "\n"
             "Config ~/.config/michacka.conf (key=value):\n"
@@ -875,13 +912,19 @@ int main(int argc, char *argv[])
     int pos = 0;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
-        if (strcmp(a, "--parts") == 0) {
-            if (i + 1 >= argc) die("--parts requires a value");
+        if (strcmp(a, "--parts") == 0 || strcmp(a, "-p") == 0) {
+            if (i + 1 >= argc) die("--parts/-p requires a value");
             cfg.parts = atoi(argv[++i]);
-        } else if (strcmp(a, "--out") == 0) {
-            if (i + 1 >= argc) die("--out requires a prefix");
+        } else if (strcmp(a, "--len") == 0 || strcmp(a, "-l") == 0) {
+            if (i + 1 >= argc) die("--len/-l requires a value");
+            cfg.len = parse_len(argv[++i]);
+            if (cfg.len < 1 || cfg.len > 86400)
+                die("invalid length '%s' (try e.g. 600 | 90s | 15min | 1h30m; max 86400)",
+                    argv[i]);
+        } else if (strcmp(a, "--out") == 0 || strcmp(a, "-o") == 0) {
+            if (i + 1 >= argc) die("--out/-o requires a prefix");
             snprintf(cfg.out_prefix, sizeof(cfg.out_prefix), "%s", argv[++i]);
-        } else if (strcmp(a, "--dry-run") == 0) {
+        } else if (strcmp(a, "--dry-run") == 0 || strcmp(a, "-n") == 0) {
             cfg.dry_run = 1;
         } else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
             usage(argv[0]);
@@ -910,7 +953,7 @@ int main(int argc, char *argv[])
     load_conf(&cfg);
 
     const StyleSpec *st = &STYLES[cfg.style];
-    double part_len = st->def_len;
+    double part_len = cfg.len > 0 ? cfg.len : st->def_len;
     if (cfg.parts <= 0) cfg.parts = st->def_parts;
     if (cfg.parts < 1 || cfg.parts > 96) die("--parts must be 1..96");
 

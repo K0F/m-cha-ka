@@ -11,7 +11,6 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -65,6 +64,8 @@ typedef struct {
     float fade_in[2];
     float fade_out[2];
     int parity;
+    int bpm;
+    int keylock;
 } StyleSpec;
 
 typedef struct {
@@ -75,21 +76,14 @@ typedef struct {
 
 typedef struct {
     uint64_t seed;
+    int have_seed;
     int parts;
-    double part_len;
     int style;
     const char *mus_dir;
     const char *fld_dir;
     char tj_path[1024];
     char out_prefix[512];
-    int keylock;
-    int bpm;
-    int no_master;
-    int jobs;
     int dry_run;
-    int force;
-    int limit;
-    int limit_given;
 } Cfg;
 
 static void die(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));
@@ -353,41 +347,41 @@ static float env_eval(const EnvPt *e, int n, float t)
 }
 
 static const StyleSpec STYLES[] = {
-    { "day", 12, 600.0f,
+    { "day", 1, 600.0f,
       { {0.00f, 2}, {0.18f, 1}, {0.82f, 1}, {1.00f, 2} }, 4,
       { {0.00f, 1}, {0.25f, 2}, {0.42f, 3}, {0.58f, 3}, {0.78f, 2}, {1.00f, 1} }, 6,
       { {0.00f, 0}, {0.15f, 1}, {0.32f, 3}, {0.55f, 3}, {0.72f, 2}, {0.86f, 0}, {1.00f, 0} }, 7,
       { {0.00f, 2}, {0.38f, 3}, {0.62f, 3}, {0.85f, 2}, {1.00f, 3} }, 5,
       { {0.0f, 0.85f}, {0.5f, 1.0f}, {1.0f, 0.85f} }, 3,
-      { 14.0f, 28.0f }, { 16.0f, 28.0f }, 0 },
-    { "storm", 6, 300.0f,
+      { 14.0f, 28.0f }, { 16.0f, 28.0f }, 0, 0, 0 },
+    { "storm", 2, 300.0f,
       { {0.0f, 1}, {1.0f, 1} }, 2,
       { {0.0f, 2}, {0.25f, 4}, {0.75f, 4}, {1.0f, 2} }, 4,
       { {0.0f, 1}, {0.15f, 4}, {0.85f, 4}, {1.0f, 2} }, 4,
       { {0.0f, 1}, {0.5f, 2}, {1.0f, 1} }, 3,
       { {0.0f, 0.6f}, {0.12f, 1.0f}, {0.82f, 1.0f}, {1.0f, 0.65f} }, 4,
-      { 3.0f, 6.0f }, { 4.0f, 8.0f }, 0 },
-    { "drift", 8, 600.0f,
+      { 3.0f, 6.0f }, { 4.0f, 8.0f }, 0, 0, 0 },
+    { "drift", 1, 600.0f,
       { {0.0f, 2}, {1.0f, 2} }, 2,
       { {0.0f, 1}, {0.5f, 2}, {1.0f, 1} }, 3,
       { {0.0f, 0}, {1.0f, 0} }, 2,
       { {0.0f, 2}, {0.5f, 3}, {1.0f, 2} }, 3,
       { {0.0f, 0.8f}, {0.5f, 0.95f}, {1.0f, 0.8f} }, 3,
-      { 18.0f, 35.0f }, { 20.0f, 35.0f }, 0 },
-    { "pulse", 10, 600.0f,
+      { 18.0f, 35.0f }, { 20.0f, 35.0f }, 0, 0, 0 },
+    { "pulse", 1, 600.0f,
       { {0.0f, 1}, {1.0f, 1} }, 2,
       { {0.0f, 2}, {1.0f, 2} }, 2,
       { {0.0f, 3}, {0.15f, 5}, {0.9f, 4}, {1.0f, 3} }, 4,
       { {0.0f, 1}, {0.5f, 2}, {1.0f, 1} }, 3,
       { {0.0f, 0.7f}, {0.1f, 1.0f}, {0.92f, 1.0f}, {1.0f, 0.75f} }, 4,
-      { 4.0f, 8.0f }, { 5.0f, 10.0f }, 0 },
-    { "rupture", 8, 450.0f,
+      { 4.0f, 8.0f }, { 5.0f, 10.0f }, 0, 1, 0 },
+    { "rupture", 2, 300.0f,
       { {0.0f, 1}, {1.0f, 1} }, 2,
       { {0.0f, 2}, {0.5f, 3}, {1.0f, 2} }, 3,
       { {0.0f, 1}, {0.5f, 3}, {1.0f, 1} }, 3,
       { {0.0f, 1}, {0.5f, 2}, {1.0f, 1} }, 3,
       { {0.0f, 0.5f}, {0.1f, 1.0f}, {0.75f, 1.0f}, {1.0f, 0.6f} }, 4,
-      { 2.0f, 4.0f }, { 3.0f, 6.0f }, 1 },
+      { 2.0f, 4.0f }, { 3.0f, 6.0f }, 1, 1, 1 },
 };
 
 static int style_by_name(const char *name)
@@ -580,32 +574,47 @@ static void write_edl_file(const char *path, const char *content)
     fclose(fp);
 }
 
+static int xfile(const char *path)
+{
+    struct stat sb;
+    return stat(path, &sb) == 0 && S_ISREG(sb.st_mode) && access(path, X_OK) == 0;
+}
+
 static void resolve_tj(Cfg *cfg)
 {
     char cand[1024];
     const char *env = getenv("MICHACKA_TJ");
-    if (access(cfg->tj_path, X_OK) == 0) return;
-    if (env && access(env, X_OK) == 0) {
+    if (env && xfile(env)) {
         snprintf(cfg->tj_path, sizeof(cfg->tj_path), "%s", env);
         return;
     }
-    static const char *defaults[] = { "./tj", "../tj/tj", "../../tj/tj" };
+    if (xfile(cfg->tj_path)) return;
+    static const char *defaults[] = { "./tj", "tj/tj", "../tj/tj", "../../tj/tj" };
     for (size_t i = 0; i < sizeof(defaults) / sizeof(defaults[0]); i++) {
-        if (access(defaults[i], X_OK) == 0) {
+        if (xfile(defaults[i])) {
             snprintf(cfg->tj_path, sizeof(cfg->tj_path), "%s", defaults[i]);
+            return;
+        }
+    }
+    if (access("tj", F_OK) == 0) {
+        fprintf(stderr, "michacka: building tj submodule ...\n");
+        int rc = system("make -s -C tj");
+        if (rc == 0 && xfile("tj/tj")) {
+            snprintf(cfg->tj_path, sizeof(cfg->tj_path), "%s", "tj/tj");
             return;
         }
     }
     if (access("../tj", X_OK) == 0) {
         fprintf(stderr, "michacka: building tj in ../tj ...\n");
         int rc = system("make -s -C ../tj");
-        if (rc == 0 && access("../tj/tj", X_OK) == 0) {
-            snprintf(cfg->tj_path, sizeof(cfg->tj_path), "../tj/tj");
+        if (rc == 0 && xfile("../tj/tj")) {
+            snprintf(cfg->tj_path, sizeof(cfg->tj_path), "%s", "../tj/tj");
             return;
         }
     }
     snprintf(cand, sizeof(cand), "%s", cfg->tj_path);
-    die("tj renderer not found (tried %s, MICHACKA_TJ, ./tj, ../tj/tj)", cand);
+    die("tj renderer not found (tried %s, MICHACKA_TJ; hint: git submodule update --init)",
+        cand);
 }
 
 static void write_plan_files(const Cfg *cfg, char **music_edls, char **field_edls)
@@ -628,8 +637,8 @@ static int render_part(const Cfg *cfg, const StyleSpec *st, const char *music_ed
     snprintf(part_wav, sizeof(part_wav), "%s.wav", base);
     snprintf(master_wav, sizeof(master_wav), "%s_master.wav", base);
 
-    if (!cfg->force && access(master_wav, F_OK) == 0) {
-        printf("[part %02d] exists, skipping (--force to rebuild)\n", idx + 1);
+    if (access(master_wav, F_OK) == 0) {
+        printf("[part %02d] exists, skipping\n", idx + 1);
         return 0;
     }
 
@@ -637,8 +646,8 @@ static int render_part(const Cfg *cfg, const StyleSpec *st, const char *music_ed
     sh_quote(qedl, sizeof(qedl), music_edl);
     snprintf(cmd, sizeof(cmd), "%s %s %s%s%s --arc \"%s\" --fade-in 0.5 --fade-out 2",
              cfg->tj_path, qedl, music_wav,
-             cfg->bpm ? " --bpm auto --snap" : "",
-             cfg->keylock ? " --keylock auto" : "", arc);
+             st->bpm ? " --bpm auto --snap" : "",
+             st->keylock ? " --keylock auto" : "", arc);
     printf("[part %02d] pass A: music (%s)\n", idx + 1, st->name);
     fflush(stdout);
     if (system(cmd) != 0) {
@@ -650,8 +659,8 @@ static int render_part(const Cfg *cfg, const StyleSpec *st, const char *music_ed
     snprintf(bed, sizeof(bed), "in0 at0 v0 fin0.5 fout0.5 %s", music_wav);
     snprintf(combined, sizeof(combined), "%s,%s", bed, field_edl);
     sh_quote(qedl, sizeof(qedl), combined);
-    snprintf(cmd, sizeof(cmd), "%s %s %s --fade-in 0.5 --fade-out 2%s",
-             cfg->tj_path, qedl, part_wav, cfg->no_master ? "" : " --master subtle");
+    snprintf(cmd, sizeof(cmd), "%s %s %s --fade-in 0.5 --fade-out 2 --master subtle",
+             cfg->tj_path, qedl, part_wav);
     printf("[part %02d] pass B: + field recordings\n", idx + 1);
     fflush(stdout);
     if (system(cmd) != 0) {
@@ -661,55 +670,12 @@ static int render_part(const Cfg *cfg, const StyleSpec *st, const char *music_ed
     return 0;
 }
 
-typedef struct {
-    int lo, hi;
-    int failed;
-} JobRange;
-
-static int run_range(const Cfg *cfg, const StyleSpec *st, char **music_edls, char **field_edls,
-                     char **arcs, const JobRange *jr)
-{
-    for (int i = jr->lo; i <= jr->hi; i++)
-        if (render_part(cfg, st, music_edls[i], field_edls[i], arcs[i], i)) return 1;
-    return 0;
-}
-
 static int render_all_parts(const Cfg *cfg, const StyleSpec *st, char **music_edls,
                             char **field_edls, char **arcs)
 {
-    if (cfg->dry_run || cfg->jobs <= 1) {
-        JobRange jr = { 0, cfg->parts - 1, 0 };
-        return run_range(cfg, st, music_edls, field_edls, arcs, &jr);
-    }
-    int nj = cfg->jobs < cfg->parts ? cfg->jobs : cfg->parts;
-    pid_t *pids = xmalloc(sizeof(pid_t) * (size_t)nj);
-    JobRange *ranges = xmalloc(sizeof(JobRange) * (size_t)nj);
-    int per = (cfg->parts + nj - 1) / nj;
-    for (int k = 0; k < nj; k++) {
-        ranges[k].lo = k * per;
-        ranges[k].hi = ranges[k].lo + per - 1;
-        if (ranges[k].hi >= cfg->parts) ranges[k].hi = cfg->parts - 1;
-        ranges[k].failed = 0;
-        pid_t pid = fork();
-        if (pid < 0) die("fork failed: %s", strerror(errno));
-        if (pid == 0) {
-            _exit(run_range(cfg, st, music_edls, field_edls, arcs, &ranges[k]) ? 1 : 0);
-        }
-        pids[k] = pid;
-    }
-    int failed = 0;
-    for (int k = 0; k < nj; k++) {
-        int status = 0;
-        waitpid(pids[k], &status, 0);
-        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-            failed = 1;
-            fprintf(stderr, "michacka: worker %d (parts %02d-%02d) failed\n", k,
-                    ranges[k].lo + 1, ranges[k].hi + 1);
-        }
-    }
-    free(pids);
-    free(ranges);
-    return failed;
+    for (int i = 0; i < cfg->parts; i++)
+        if (render_part(cfg, st, music_edls[i], field_edls[i], arcs[i], i)) return 1;
+    return 0;
 }
 
 static double ffprobe_duration_file(const char *path)
@@ -773,31 +739,46 @@ static void finish_mix(const Cfg *cfg)
     }
 }
 
-static void load_library(TrackList *lib, const char *dir, const char *label, int limit, int limit_given)
+static void cleanup_parts(const Cfg *cfg)
+{
+    printf("=== cleaning intermediate renders ===\n");
+    for (int p = 0; p < cfg->parts; p++) {
+        char path[760];
+        snprintf(path, sizeof(path), "%s_part%02d_music.wav", cfg->out_prefix, p + 1);
+        unlink(path);
+        snprintf(path, sizeof(path), "%s_part%02d.wav", cfg->out_prefix, p + 1);
+        unlink(path);
+        snprintf(path, sizeof(path), "%s_part%02d_master.wav", cfg->out_prefix, p + 1);
+        unlink(path);
+        snprintf(path, sizeof(path), "%s_part%02d.edl", cfg->out_prefix, p + 1);
+        unlink(path);
+        snprintf(path, sizeof(path), "%s_part%02d_master.edl", cfg->out_prefix, p + 1);
+        unlink(path);
+        snprintf(path, sizeof(path), "%s_part%02d.edl", cfg->out_prefix, p + 1);
+        unlink(path);
+    }
+}
+
+static void load_library(TrackList *lib, const char *dir, const char *label)
 {
     char **paths = NULL;
     int n = 0, cap = 0;
     scan_dir_rec(dir, &paths, &n, &cap);
     if (n == 0) die("no audio files found in %s (%s)", dir, label);
-    
-    if (!limit_given && n > 1000) {
-        limit = 1000;
-        printf("  %s: found %d files, auto-limiting to %d (use --limit to override)\n", label, n, limit);
-    }
-    
     int keep = n;
-    if (limit > 0 && limit < n) {
+    if (n > 1000) {
         int *idx = xmalloc(sizeof(int) * (size_t)n);
         for (int i = 0; i < n; i++) idx[i] = i;
         shuffle_ints(idx, n);
-        for (int i = 0; i < limit; i++) {
+        for (int i = 0; i < 1000; i++) {
             char *tmp = paths[i];
             paths[i] = paths[idx[i]];
             paths[idx[i]] = tmp;
         }
         free(idx);
-        keep = limit;
+        keep = 1000;
         for (int i = keep; i < n; i++) free(paths[i]);
+        printf("  %s: found %d files, sampling %d\n", label, n, keep);
     }
     lib->v = xmalloc(sizeof(Track) * (size_t)keep);
     lib->cap = keep;
@@ -810,33 +791,77 @@ static void load_library(TrackList *lib, const char *dir, const char *label, int
     }
     for (int i = 0; i < n; i++) free(paths[i]);
     free(paths);
-    printf("  %s: %d files\n", label, lib->n);
+    if (keep == n) printf("  %s: %d files\n", label, lib->n);
+}
+
+static void expand_tilde(char *dst, size_t cap, const char *val)
+{
+    if (val[0] == '~' && (val[1] == '/' || val[1] == '\0')) {
+        const char *home = getenv("HOME");
+        snprintf(dst, cap, "%s%s", home ? home : "", val + 1);
+    } else {
+        snprintf(dst, cap, "%s", val);
+    }
+}
+
+static void load_conf(Cfg *cfg)
+{
+    char path[1024];
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    if (xdg && xdg[0])
+        snprintf(path, sizeof(path), "%s/michacka.conf", xdg);
+    else {
+        const char *home = getenv("HOME");
+        snprintf(path, sizeof(path), "%s/.config/michacka.conf", home ? home : ".");
+    }
+    FILE *fp = fopen(path, "r");
+    if (!fp) return;
+    char line[1200];
+    int ln = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        ln++;
+        char *s = line;
+        while (*s == ' ' || *s == '\t') s++;
+        if (*s == '#' || *s == '\n' || *s == '\0') continue;
+        char *eq = strchr(s, '=');
+        if (!eq) die("%s:%d: expected key=value", path, ln);
+        *eq = '\0';
+        char *key = s, *val = eq + 1;
+        char *e = key + strlen(key);
+        while (e > key && (e[-1] == ' ' || e[-1] == '\t')) *--e = '\0';
+        while (*val == ' ' || *val == '\t') val++;
+        e = val + strlen(val);
+        while (e > val && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n'))
+            *--e = '\0';
+        char exp[1024];
+        expand_tilde(exp, sizeof(exp), val);
+        if (strcmp(key, "mus") == 0) cfg->mus_dir = xstrdup(exp);
+        else if (strcmp(key, "fld") == 0) cfg->fld_dir = xstrdup(exp);
+        else if (strcmp(key, "tj") == 0) snprintf(cfg->tj_path, sizeof(cfg->tj_path), "%s", exp);
+        else die("%s:%d: unknown key '%s' (expected mus|fld|tj)", path, ln, key);
+    }
+    fclose(fp);
 }
 
 static void usage(const char *prog)
 {
     fprintf(stderr,
-            "Usage: %s [options] [MUS_DIR] [FLD_DIR]\n"
+            "Usage: %s [STYLE] [SEED] [options]\n"
             "\n"
             "Generative composition driver: plans layered movements, emits EDLs,\n"
             "and renders them through the tj compositing tool.\n"
             "\n"
-            "  --seed N          RNG seed (default: random, printed for reproduction)\n"
+            "  STYLE             day | storm | drift | pulse | rupture (default day)\n"
+            "  SEED              RNG seed (default: random, printed for reproduction)\n"
             "  --parts N         number of movements (style default)\n"
-            "  --part-len SEC    length of each movement in seconds (style default)\n"
-            "  --style NAME      day | storm | drift | pulse | rupture (default day)\n"
-            "  MUS_DIR, --mus    music library (default ~/recordings)\n"
-            "  FLD_DIR, --fld    field-recording library (default /mnt/data/recordings/field)\n"
-            "  --tj PATH         path to tj renderer (default ../tj/tj, env MICHACKA_TJ)\n"
             "  --out PREFIX      output prefix (default michacka_<style>_<min>min)\n"
-            "  --limit N         sample only N files per library (defaults to 1000 for big libs)\n"
-            "  --bpm             beat-match the music pass (tj --bpm auto --snap)\n"
-            "  --keylock         transpose the music pass to a shared key (tj --keylock auto)\n"
-            "  --no-master       skip the mastering pass on movement renders\n"
-            "  --jobs N          render movements in parallel (default 1)\n"
             "  --dry-run         plan + write EDLs only, no audio\n"
-            "  --force           re-render existing movements\n"
-            "  -h, --help        this help\n",
+            "  -h, --help        this help\n"
+            "\n"
+            "Config ~/.config/michacka.conf (key=value):\n"
+            "  mus=DIR           music library (default ~/recordings)\n"
+            "  fld=DIR           field-recording library (default /mnt/data/recordings/field)\n"
+            "  tj=PATH           tj renderer (default tj/ submodule; env MICHACKA_TJ wins)\n",
             prog);
 }
 
@@ -845,67 +870,49 @@ int main(int argc, char *argv[])
     Cfg cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.style = ST_DAY;
-    cfg.jobs = 1;
-    snprintf(cfg.tj_path, sizeof(cfg.tj_path), "../tj/tj");
+    snprintf(cfg.tj_path, sizeof(cfg.tj_path), "tj/tj");
 
-    static const char *style_names[] = { "day", "storm", "drift", "pulse", "rupture" };
-
+    int pos = 0;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
-        if (strcmp(a, "--seed") == 0) {
-            if (i + 1 >= argc) die("--seed requires a value");
-            cfg.seed = strtoull(argv[++i], NULL, 10);
-        } else if (strcmp(a, "--parts") == 0) {
+        if (strcmp(a, "--parts") == 0) {
             if (i + 1 >= argc) die("--parts requires a value");
             cfg.parts = atoi(argv[++i]);
-        } else if (strcmp(a, "--part-len") == 0) {
-            if (i + 1 >= argc) die("--part-len requires a value");
-            cfg.part_len = atof(argv[++i]);
-        } else if (strcmp(a, "--style") == 0) {
-            if (i + 1 >= argc) die("--style requires a name");
-            int s = style_by_name(argv[++i]);
-            if (s < 0) die("unknown style '%s' (day|storm|drift|pulse|rupture)", argv[i]);
-            cfg.style = s;
-        } else if (strcmp(a, "--mus") == 0) {
-            if (i + 1 >= argc) die("--mus requires a path");
-            cfg.mus_dir = xstrdup(argv[++i]);
-        } else if (strcmp(a, "--fld") == 0) {
-            if (i + 1 >= argc) die("--fld requires a path");
-            cfg.fld_dir = xstrdup(argv[++i]);
-        } else if (strcmp(a, "--tj") == 0) {
-            if (i + 1 >= argc) die("--tj requires a path");
-            snprintf(cfg.tj_path, sizeof(cfg.tj_path), "%s", argv[++i]);
         } else if (strcmp(a, "--out") == 0) {
             if (i + 1 >= argc) die("--out requires a prefix");
             snprintf(cfg.out_prefix, sizeof(cfg.out_prefix), "%s", argv[++i]);
-        } else if (strcmp(a, "--limit") == 0) {
-            if (i + 1 >= argc) die("--limit requires a value");
-            cfg.limit = atoi(argv[++i]);
-            cfg.limit_given = 1;
-        } else if (strcmp(a, "--jobs") == 0) {
-            if (i + 1 >= argc) die("--jobs requires a value");
-            cfg.jobs = atoi(argv[++i]);
-        } else if (strcmp(a, "--bpm") == 0) cfg.bpm = 1;
-        else if (strcmp(a, "--keylock") == 0) cfg.keylock = 1;
-        else if (strcmp(a, "--no-master") == 0) cfg.no_master = 1;
-        else if (strcmp(a, "--dry-run") == 0) cfg.dry_run = 1;
-        else if (strcmp(a, "--force") == 0) cfg.force = 1;
-        else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) { usage(argv[0]); return 0; }
-        else if (a[0] != '-') {
-            if (!cfg.mus_dir) cfg.mus_dir = xstrdup(a);
-            else if (!cfg.fld_dir) cfg.fld_dir = xstrdup(a);
-            else die("unexpected positional argument '%s'", a);
+        } else if (strcmp(a, "--dry-run") == 0) {
+            cfg.dry_run = 1;
+        } else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
+            usage(argv[0]);
+            return 0;
+        } else if (a[0] != '-') {
+            if (pos == 0) {
+                int s = style_by_name(a);
+                if (s < 0) die("unknown style '%s' (day|storm|drift|pulse|rupture)", a);
+                cfg.style = s;
+            } else if (pos == 1) {
+                char *end;
+                errno = 0;
+                cfg.seed = strtoull(a, &end, 10);
+                if (end == a || *end != '\0')
+                    die("invalid seed '%s' (positive integer expected)", a);
+                cfg.have_seed = 1;
+            } else {
+                die("unexpected argument '%s' (usage: STYLE SEED)", a);
+            }
+            pos++;
+        } else {
+            die("unknown option '%s' (try --help)", a);
         }
-        else die("unknown option '%s' (try --help)", a);
     }
 
+    load_conf(&cfg);
+
     const StyleSpec *st = &STYLES[cfg.style];
+    double part_len = st->def_len;
     if (cfg.parts <= 0) cfg.parts = st->def_parts;
-    if (cfg.part_len <= 0.0) cfg.part_len = st->def_len;
-    if (cfg.part_len < 20.0) die("--part-len must be at least 20 s");
     if (cfg.parts < 1 || cfg.parts > 96) die("--parts must be 1..96");
-    if (cfg.jobs < 1 || cfg.jobs > 16) die("--jobs must be 1..16");
-    if (cfg.limit < 0) cfg.limit = 0;
 
     char home_mus[1024];
     if (!cfg.mus_dir) {
@@ -916,13 +923,12 @@ int main(int argc, char *argv[])
     if (!cfg.fld_dir) cfg.fld_dir = "/mnt/data/recordings/field";
 
     if (!cfg.out_prefix[0]) {
-        int mins = (int)lround(cfg.parts * cfg.part_len / 60.0);
+        int mins = (int)lround(cfg.parts * part_len / 60.0);
         snprintf(cfg.out_prefix, sizeof(cfg.out_prefix), "michacka_%s_%dmin",
-                 style_names[cfg.style], mins);
+                 st->name, mins);
     }
 
-    int seed_given = cfg.seed != 0;
-    if (!seed_given) {
+    if (!cfg.have_seed) {
         cfg.seed = (uint64_t)time(NULL) ^ ((uint64_t)getpid() << 32);
         if (cfg.seed == 0) cfg.seed = 1;
     }
@@ -933,13 +939,13 @@ int main(int argc, char *argv[])
 
     printf("=== michacka ===\n");
     printf("style: %s | parts: %d x %.0f s | seed: %llu%s\n", st->name, cfg.parts,
-           cfg.part_len, (unsigned long long)cfg.seed, seed_given ? "" : " (auto)");
+           part_len, (unsigned long long)cfg.seed, cfg.have_seed ? "" : " (auto)");
     printf("tj: %s\n", cfg.tj_path);
     printf("libraries:\n");
 
     TrackList mus = { 0 }, fld = { 0 };
-    load_library(&mus, cfg.mus_dir, "music", cfg.limit, cfg.limit_given);
-    load_library(&fld, cfg.fld_dir, "field", cfg.limit, cfg.limit_given);
+    load_library(&mus, cfg.mus_dir, "music");
+    load_library(&fld, cfg.fld_dir, "field");
 
     printf("analyzing (tj cache):\n");
     analyze_lib(cfg.tj_path, &mus, "music");
@@ -971,25 +977,25 @@ int main(int argc, char *argv[])
 
         int budget = MAX_EDL_ENTRIES - 2;
         if (nb > budget) nb = budget;
-        add_layered_entries(&m, &mus, ROLE_AMBIENT, nb, cfg.part_len,
-                            cfg.part_len * 0.5, cfg.part_len * 0.75,
+        add_layered_entries(&m, &mus, ROLE_AMBIENT, nb, part_len,
+                            part_len * 0.5, part_len * 0.75,
                             -14.0, -10.0, st->fade_in[0], st->fade_out[1],
                             &warned_bed);
         budget -= m.count;
         if (nm > budget) nm = budget;
-        add_layered_entries(&m, &mus, ROLE_MOTION, nm, cfg.part_len,
+        add_layered_entries(&m, &mus, ROLE_MOTION, nm, part_len,
                             120.0, 260.0, -8.0, -4.0, 6.0, 12.0, &warned_motion);
         budget -= m.count;
         if (npp > budget) npp = budget;
-        add_layered_entries(&m, &mus, ROLE_PULSE, npp, cfg.part_len,
+        add_layered_entries(&m, &mus, ROLE_PULSE, npp, part_len,
                             50.0, 150.0, -7.0, -4.0, 4.0, 8.0, &warned_pulse);
 
         Edl f;
         edl_init(&f);
-        add_field_entries(&f, &fld, nf, cfg.part_len);
+        add_field_entries(&f, &fld, nf, part_len);
 
         char arc[512];
-        build_arc(arc, sizeof(arc), st, cfg.part_len);
+        build_arc(arc, sizeof(arc), st, part_len);
 
         music_edls[p] = xstrdup(m.buf);
         field_edls[p] = xstrdup(f.buf);
@@ -1013,6 +1019,7 @@ int main(int argc, char *argv[])
     write_plan_files(&cfg, music_edls, field_edls);
 
     finish_mix(&cfg);
+    cleanup_parts(&cfg);
 
     for (int p = 0; p < cfg.parts; p++) {
         free(music_edls[p]);
@@ -1025,7 +1032,7 @@ int main(int argc, char *argv[])
     free(mus.v);
     free(fld.v);
 
-    printf("Done! Output: %s_mix.{wav,flac,mp3}\nReproduce with: --seed %llu\n",
-           cfg.out_prefix, (unsigned long long)cfg.seed);
+    printf("Done! Output: %s_mix.{wav,flac,mp3}\nReproduce with: ./michacka %s %llu\n",
+           cfg.out_prefix, st->name, (unsigned long long)cfg.seed);
     return 0;
 }

@@ -1,21 +1,22 @@
 michacka: michacka.c
 	gcc michacka.c -O2 -Wall -Wextra -o michacka -lm
 
-.PHONY: clean test
-clean:
-	rm -f michacka test_dryrun_*
-	rm -rf test_env
+test_michacka: michacka.c test_michacka.c
+	gcc test_michacka.c -O2 -Wall -Wextra -o test_michacka -lm
 
-test: michacka
-	@echo "Running basic tests..."
-	@mkdir -p test_env/mus test_env/fld
+test: michacka test_michacka
+	./test_michacka
+
+smoke: michacka
+	@mkdir -p test_env/.config test_env/mus test_env/fld
 	@touch test_env/mus/track1.wav test_env/fld/env1.wav
-	@./michacka --dry-run --parts 1 --part-len 20 --out test_dryrun test_env/mus test_env/fld > /dev/null 2>&1
-	@if [ -f test_dryrun_part01_music.edl ] && [ -f test_dryrun_part01_field.edl ]; then \
-		echo "Test passed: EDL files generated successfully."; \
-		rm -rf test_env test_dryrun_*; \
-	else \
-		echo "Test failed: EDL files not found."; \
-		rm -rf test_env test_dryrun_*; \
-		exit 1; \
-	fi
+	@printf 'mus=%s/test_env/mus\nfld=%s/test_env/fld\n' "$(CURDIR)" "$(CURDIR)" > test_env/.config/michacka.conf
+	@HOME=$(CURDIR)/test_env ./michacka day 42 --parts 1 --dry-run --out test_dryrun >/dev/null
+	@test -f test_dryrun_part01_music.edl -a -f test_dryrun_part01_field.edl
+	@echo "smoke ok: EDLs generated"
+	@rm -rf test_env test_dryrun_*
+
+.PHONY: clean test smoke
+clean:
+	rm -f michacka test_michacka
+	rm -rf test_env test_dryrun_*

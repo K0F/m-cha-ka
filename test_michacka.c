@@ -286,18 +286,27 @@ static int run_cli(const char *args)
     return WEXITSTATUS(rc);
 }
 
+static void test_style_defaults(void)
+{
+    for (size_t i = 0; i < sizeof(STYLES) / sizeof(STYLES[0]); i++)
+        CHECK((int)(STYLES[i].def_parts * STYLES[i].def_len) == 600);
+    CHECK(STYLES[ST_PULSE].bpm == 1 && STYLES[ST_PULSE].keylock == 0);
+    CHECK(STYLES[ST_RUPTURE].bpm == 1 && STYLES[ST_RUPTURE].keylock == 1);
+    CHECK(STYLES[ST_DAY].bpm == 0 && STYLES[ST_DAY].keylock == 0);
+    CHECK(STYLES[ST_STORM].bpm == 0 && STYLES[ST_DRIFT].bpm == 0);
+}
+
 static void test_cli(void)
 {
     CHECK(run_cli("--help") == 0);
     CHECK(run_cli("-h") == 0);
     CHECK(run_cli("--bogus") != 0);
-    CHECK(run_cli("--seed") != 0);
-    CHECK(run_cli("--style nope") != 0);
-    CHECK(run_cli("--part-len 19") != 0);
-    CHECK(run_cli("--parts 0") != 0);
+    CHECK(run_cli("--parts") != 0);
+    CHECK(run_cli("--out") != 0);
+    CHECK(run_cli("nope") != 0);
+    CHECK(run_cli("day abc") != 0);
+    CHECK(run_cli("day 42 extra") != 0);
     CHECK(run_cli("--parts 97") != 0);
-    CHECK(run_cli("--jobs 0") != 0);
-    CHECK(run_cli("--jobs 17") != 0);
 }
 
 int main(void)
@@ -312,6 +321,7 @@ int main(void)
     test_role_for();
     test_env_eval();
     test_style_by_name();
+    test_style_defaults();
     test_layer_count_parity();
     test_find_and_collect();
     test_pick_slice();

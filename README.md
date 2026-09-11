@@ -147,6 +147,37 @@ Per run with prefix `P`, after automatic cleanup only these remain:
   (`git clone --recursive` once, or `git submodule update --init`)
 - `ffmpeg`, `ffprobe`; tj's beat/key features additionally need
   `soundstretch`, `keyfinder-cli`, `aubioonset`
+- `ffmpeg` with `libx264` only if you use `--slide` (slideshow video output)
+
+### Termux (Android)
+
+Everything builds and runs under Termux; the config file and the CLI
+are identical to desktop Linux. Install the toolchain and renderers:
+
+```sh
+pkg install clang make git ffmpeg soundtouch aubio
+```
+
+Then clone with the tj submodule and build:
+
+```sh
+git clone --recursive git@github.com:K0F/m-cha-ka.git
+cd m-cha-ka
+git submodule update --init tj   # if not cloned with --recursive
+make
+```
+
+Notes for Android:
+
+- Termux has `soundstretch` (from `soundtouch`) and `aubioonset` (from
+  `aubio`), but **no `keyfinder-cli` package** — key detection reports `?` and
+  `--keylock` is unavailable. BPM matching and everything else still works.
+- Audio libraries (`mus`, `fld`) and photo libraries (`img`) are whatever you
+  point the config at; Termux stores them under `~/` (or shared storage via
+  `termux-setup-storage`).
+- `/tmp` may not exist by default — keep outputs (`--out`) relative or under
+  `~/`.
+- `pkg install` line above also pulls the runtime tools tj shells out to.
 
 ## Repo layout
 

@@ -725,8 +725,14 @@ static void finish_mix(const Cfg *cfg)
     if (!lp) die("cannot write %s", list_path);
     char cwd[1024];
     if (!getcwd(cwd, sizeof(cwd))) die("getcwd failed");
-    for (int i = 0; i < cfg->parts; i++)
-        fprintf(lp, "file '%s/%s_part%02d_master.wav'\n", cwd, cfg->out_prefix, i + 1);
+    for (int i = 0; i < cfg->parts; i++) {
+        char wav[2048];
+        if (cfg->out_prefix[0] == '/')
+            snprintf(wav, sizeof(wav), "%s_part%02d_master.wav", cfg->out_prefix, i + 1);
+        else
+            snprintf(wav, sizeof(wav), "%s/%s_part%02d_master.wav", cwd, cfg->out_prefix, i + 1);
+        fprintf(lp, "file '%s'\n", wav);
+    }
     fclose(lp);
 
     char cmd[CMD_CAP], qlist[760];

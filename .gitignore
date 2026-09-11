@@ -2,6 +2,8 @@
 *.wav
 *.flac
 *.mp3
+*.mp4
+*-session.json
 
 # Built binaries
 michacka

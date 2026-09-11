@@ -18,12 +18,13 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-#define MAX_EDL_ENTRIES 30
+#define MAX_EDL_ENTRIES 96
 #define PLAN_MARGIN 2.0
 #define ANALYZE_BATCH 12
 #define MAX_ENV_PTS 10
 #define EDL_CAP 16384
 #define CMD_CAP 32768
+#define CMDFULL_CAP (1u << 22)
 
 enum { ROLE_AMBIENT, ROLE_MOTION, ROLE_PULSE };
 enum { ST_DAY, ST_STORM, ST_DRIFT, ST_PULSE, ST_RUPTURE };
@@ -66,6 +67,7 @@ typedef struct {
     int parity;
     int bpm;
     int keylock;
+    int nslide;
 } StyleSpec;
 
 typedef struct {
@@ -82,9 +84,15 @@ typedef struct {
     int style;
     const char *mus_dir;
     const char *fld_dir;
+    const char *img_dir;
     char tj_path[1024];
     char out_prefix[512];
     int dry_run;
+    int slide;
+    int slide_only;
+    double slide_max_mb;
+    int slide_days;
+    int dense;
 } Cfg;
 
 static void die(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));
@@ -169,6 +177,17 @@ static int has_audio_ext(const char *name)
     return 0;
 }
 
+static int has_img_ext(const char *name)
+{
+    static const char *exts[] = { ".jpg", ".jpeg", ".png", ".webp" };
+    size_t len = strlen(name);
+    for (size_t i = 0; i < sizeof(exts) / sizeof(exts[0]); i++) {
+        size_t el = strlen(exts[i]);
+        if (len > el && strcasecmp(name + len - el, exts[i]) == 0) return 1;
+    }
+    return 0;
+}
+
 static void push_path(char ***v, int *n, int *cap, char *path)
 {
     if (*n == *cap) {
@@ -178,7 +197,8 @@ static void push_path(char ***v, int *n, int *cap, char *path)
     (*v)[(*n)++] = path;
 }
 
-static void scan_dir_rec(const char *dir, char ***v, int *n, int *cap)
+static void scan_dir_rec(const char *dir, char ***v, int *n, int *cap,
+                         int (*want)(const char *name))
 {
     struct dirent **ents = NULL;
     int cnt = scandir(dir, &ents, NULL, alphasort);
@@ -193,8 +213,8 @@ static void scan_dir_rec(const char *dir, char ***v, int *n, int *cap)
             if ((size_t)snprintf(path, sizeof(path), "%s/%s", dir, name) < sizeof(path)) {
                 struct stat st;
                 if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
-                    scan_dir_rec(path, v, n, cap);
-                } else if (has_audio_ext(name) && !strchr(name, ',') && !strchr(name, '"')) {
+                    scan_dir_rec(path, v, n, cap, want);
+                } else if (want(name) && !strchr(name, ',') && !strchr(name, '"')) {
                     push_path(v, n, cap, xstrdup(path));
                 }
             }
@@ -354,35 +374,35 @@ static const StyleSpec STYLES[] = {
       { {0.00f, 0}, {0.15f, 1}, {0.32f, 3}, {0.55f, 3}, {0.72f, 2}, {0.86f, 0}, {1.00f, 0} }, 7,
       { {0.00f, 2}, {0.38f, 3}, {0.62f, 3}, {0.85f, 2}, {1.00f, 3} }, 5,
       { {0.0f, 0.85f}, {0.5f, 1.0f}, {1.0f, 0.85f} }, 3,
-      { 14.0f, 28.0f }, { 16.0f, 28.0f }, 0, 0, 0 },
+      { 14.0f, 28.0f }, { 16.0f, 28.0f }, 0, 0, 0, 12 },
     { "storm", 2, 300.0f,
       { {0.0f, 1}, {1.0f, 1} }, 2,
       { {0.0f, 2}, {0.25f, 4}, {0.75f, 4}, {1.0f, 2} }, 4,
       { {0.0f, 1}, {0.15f, 4}, {0.85f, 4}, {1.0f, 2} }, 4,
       { {0.0f, 1}, {0.5f, 2}, {1.0f, 1} }, 3,
       { {0.0f, 0.6f}, {0.12f, 1.0f}, {0.82f, 1.0f}, {1.0f, 0.65f} }, 4,
-      { 3.0f, 6.0f }, { 4.0f, 8.0f }, 0, 0, 0 },
+      { 3.0f, 6.0f }, { 4.0f, 8.0f }, 0, 0, 0, 10 },
     { "drift", 1, 600.0f,
       { {0.0f, 2}, {1.0f, 2} }, 2,
       { {0.0f, 1}, {0.5f, 2}, {1.0f, 1} }, 3,
       { {0.0f, 0}, {1.0f, 0} }, 2,
       { {0.0f, 2}, {0.5f, 3}, {1.0f, 2} }, 3,
       { {0.0f, 0.8f}, {0.5f, 0.95f}, {1.0f, 0.8f} }, 3,
-      { 18.0f, 35.0f }, { 20.0f, 35.0f }, 0, 0, 0 },
+      { 18.0f, 35.0f }, { 20.0f, 35.0f }, 0, 0, 0, 10 },
     { "pulse", 1, 600.0f,
       { {0.0f, 1}, {1.0f, 1} }, 2,
       { {0.0f, 2}, {1.0f, 2} }, 2,
       { {0.0f, 3}, {0.15f, 5}, {0.9f, 4}, {1.0f, 3} }, 4,
       { {0.0f, 1}, {0.5f, 2}, {1.0f, 1} }, 3,
       { {0.0f, 0.7f}, {0.1f, 1.0f}, {0.92f, 1.0f}, {1.0f, 0.75f} }, 4,
-      { 4.0f, 8.0f }, { 5.0f, 10.0f }, 0, 1, 0 },
+      { 4.0f, 8.0f }, { 5.0f, 10.0f }, 0, 1, 0, 12 },
     { "rupture", 2, 300.0f,
       { {0.0f, 1}, {1.0f, 1} }, 2,
       { {0.0f, 2}, {0.5f, 3}, {1.0f, 2} }, 3,
       { {0.0f, 1}, {0.5f, 3}, {1.0f, 1} }, 3,
       { {0.0f, 1}, {0.5f, 2}, {1.0f, 1} }, 3,
       { {0.0f, 0.5f}, {0.1f, 1.0f}, {0.75f, 1.0f}, {1.0f, 0.6f} }, 4,
-      { 2.0f, 4.0f }, { 3.0f, 6.0f }, 1, 1, 1 },
+      { 2.0f, 4.0f }, { 3.0f, 6.0f }, 1, 1, 1, 10 },
 };
 
 static int style_by_name(const char *name)
@@ -764,7 +784,7 @@ static void load_library(TrackList *lib, const char *dir, const char *label)
 {
     char **paths = NULL;
     int n = 0, cap = 0;
-    scan_dir_rec(dir, &paths, &n, &cap);
+    scan_dir_rec(dir, &paths, &n, &cap, has_audio_ext);
     if (n == 0) die("no audio files found in %s (%s)", dir, label);
     int keep = n;
     if (n > 1000) {
@@ -793,6 +813,386 @@ static void load_library(TrackList *lib, const char *dir, const char *label)
     for (int i = 0; i < n; i++) free(paths[i]);
     free(paths);
     if (keep == n) printf("  %s: %d files\n", label, lib->n);
+}
+
+typedef struct {
+    char **v;
+    int n, cap;
+} PathList;
+
+static time_t image_taken(const char *path)
+{
+    const char *base = path_tail(path);
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
+    if (strncmp(base, "IMG_", 4) == 0 &&
+        sscanf(base + 4, "%4d%2d%2d_%2d%2d%2d", &y, &mo, &d, &h, &mi, &s) == 6) {
+        struct tm t;
+        memset(&t, 0, sizeof(t));
+        t.tm_year = y - 1900;
+        t.tm_mon = mo - 1;
+        t.tm_mday = d;
+        t.tm_hour = h;
+        t.tm_min = mi;
+        t.tm_sec = s;
+        t.tm_isdst = -1;
+        time_t v = mktime(&t);
+        if (v != (time_t)-1) return v;
+    }
+    struct stat st;
+    if (stat(path, &st) == 0) return st.st_mtime;
+    return (time_t)-1;
+}
+
+static long tod_minutes(time_t t)
+{
+    if (t == (time_t)-1) return -1;
+    struct tm tm;
+    if (localtime_r(&t, &tm) == NULL) return -1;
+    return (long)tm.tm_hour * 60 + (long)tm.tm_min;
+}
+
+static int cmp_images_tod(const void *a, const void *b)
+{
+    const char *pa = *(const char *const *)a;
+    const char *pb = *(const char *const *)b;
+    long ma = tod_minutes(image_taken(pa));
+    long mb = tod_minutes(image_taken(pb));
+    if (ma != mb) return ma < mb ? -1 : 1;
+    return strcmp(pa, pb);
+}
+
+static void load_images(PathList *pl, const char *dir, int days)
+{
+    pl->v = NULL;
+    pl->n = 0;
+    pl->cap = 0;
+    scan_dir_rec(dir, &pl->v, &pl->n, &pl->cap, has_img_ext);
+    if (days > 0 && pl->n > 0) {
+        time_t now = time(NULL);
+        time_t cut = now - (time_t)days * 86400;
+        int w = 0;
+        int before = pl->n;
+        for (int i = 0; i < pl->n; i++) {
+            time_t t = image_taken(pl->v[i]);
+            if (t == (time_t)-1 || t >= cut)
+                pl->v[w++] = pl->v[i];
+            else
+                free(pl->v[i]);
+        }
+        pl->n = w;
+        if (pl->n == 0) {
+            fprintf(stderr, "michacka: warning: no images from the last %d day(s) in %s, slides skipped\n",
+                    days, dir);
+            free(pl->v);
+            pl->v = NULL;
+            pl->cap = 0;
+            return;
+        }
+        if (before > pl->n)
+            printf("  slides: %d of %d images fall in the last %d day(s)\n",
+                   pl->n, before, days);
+    }
+    if (pl->n == 0) {
+        fprintf(stderr, "michacka: warning: no images found in %s, slides skipped\n", dir);
+        return;
+    }
+    if (pl->n > 1000) {
+        int *idx = xmalloc(sizeof(int) * (size_t)pl->n);
+        for (int i = 0; i < pl->n; i++) idx[i] = i;
+        shuffle_ints(idx, pl->n);
+        for (int i = 0; i < 1000; i++) {
+            char *tmp = pl->v[i];
+            pl->v[i] = pl->v[idx[i]];
+            pl->v[idx[i]] = tmp;
+        }
+        free(idx);
+        for (int i = 1000; i < pl->n; i++) free(pl->v[i]);
+        pl->n = 1000;
+    }
+    qsort(pl->v, (size_t)pl->n, sizeof(char *), cmp_images_tod);
+}
+
+typedef struct {
+    char *path;
+    double dur;
+} Slide;
+
+typedef struct {
+    Slide *v;
+    int n;
+    double crossfade;
+    double total;
+} SlidePlan;
+
+#define SLIDE_FPS 25
+#define SLIDE_MAX_FRAMES 7
+#define SLIDE_W 1920
+#define SLIDE_H 1080
+#define SLIDE_PAD_W 2700
+#define SLIDE_PAD_H 1520
+
+static void slide_plan_init(SlidePlan *sp, int n, double total)
+{
+    sp->v = xmalloc(sizeof(Slide) * (size_t)n);
+    sp->n = n;
+    sp->crossfade = 0.0;
+    sp->total = total;
+}
+
+static void slide_plan_free(SlidePlan *sp)
+{
+    for (int i = 0; i < sp->n; i++) free(sp->v[i].path);
+    free(sp->v);
+    sp->v = NULL;
+    sp->n = 0;
+}
+
+/* Rapid montage: every photo gets at most SLIDE_MAX_FRAMES frames of screen
+ * time.  The list is already ordered by time-of-day (day ignored), so the cut
+ * sequence walks the day; when the pool is larger than the number of cuts
+ * needed it is sampled evenly across the whole day, otherwise it cycles so the
+ * montage still fills the full mix duration. */
+static void plan_slides(SlidePlan *sp, const PathList *imgs, int want, double total)
+{
+    int m = imgs ? imgs->n : 0;
+    if (m < 1) {
+        sp->v = NULL;
+        sp->n = 0;
+        sp->crossfade = 0.0;
+        sp->total = 0.0;
+        return;
+    }
+    if (total <= 0.0) total = 60.0;
+    double dur = (double)SLIDE_MAX_FRAMES / (double)SLIDE_FPS;
+    int need = (int)ceil(total / dur);
+    if (need < 1) need = 1;
+    int distinct = want > 0 && want < m ? want : m;
+    slide_plan_init(sp, need, total);
+    for (int i = 0; i < need; i++) {
+        int idx;
+        if (distinct >= need)
+            idx = (int)((double)i * (double)distinct / (double)need);
+        else
+            idx = i % distinct;
+        sp->v[i].path = xstrdup(imgs->v[idx]);
+        sp->v[i].dur = dur;
+    }
+}
+
+static void write_slide_plan(const Cfg *cfg, const SlidePlan *sp)
+{
+    char path[700];
+    snprintf(path, sizeof(path), "%s_slides.edl", cfg->out_prefix);
+    FILE *fp = fopen(path, "w");
+    if (!fp) die("cannot write %s: %s", path, strerror(errno));
+    for (int i = 0; i < sp->n; i++)
+        fprintf(fp, "slide%04d dur%.2f photo %s\n", i + 1, sp->v[i].dur, sp->v[i].path);
+    fclose(fp);
+}
+
+typedef struct {
+    int w, h;
+    int pw, ph;
+    int vkbps;
+    int audio_kbps;
+} SlideEncode;
+
+static SlideEncode slide_encode_config(double max_mb, double total)
+{
+    SlideEncode e;
+    memset(&e, 0, sizeof(e));
+    if (total <= 0.0) total = 60.0;
+    e.audio_kbps = 128;
+    if (max_mb <= 0.0) {
+        e.w = SLIDE_W;
+        e.h = SLIDE_H;
+        e.pw = SLIDE_PAD_W;
+        e.ph = SLIDE_PAD_H;
+        e.vkbps = 0;
+        return e;
+    }
+    double a_bytes = (double)e.audio_kbps / 8.0 * 1000.0 * total;
+    double avail = max_mb * 1000000.0 * 0.96 - a_bytes;
+    if (avail < 1000000.0) avail = 1000000.0;
+    double kbps = avail * 8.0 / total / 1000.0;
+    if (kbps < 600.0) kbps = 600.0;
+    if (kbps > 24000.0) kbps = 24000.0;
+    e.vkbps = (int)kbps;
+    if (e.vkbps < 1400) {
+        e.w = 1280;
+        e.h = 720;
+    } else if (e.vkbps < 6000) {
+        e.w = SLIDE_W;
+        e.h = SLIDE_H;
+    } else {
+        e.w = 2560;
+        e.h = 1440;
+    }
+    e.pw = (int)(e.w * 1.4 / 2) * 2;
+    e.ph = (int)(e.h * 1.4 / 2) * 2;
+    return e;
+}
+
+static int title_text(char *dst, size_t n, time_t when)
+{
+    struct tm t;
+    if (localtime_r(&when, &t) == NULL) return 0;
+    int yy = (t.tm_year + 1900) % 100;
+    int w = snprintf(dst, n, "Kof %02d", yy);
+    return w > 0 && (size_t)w < n;
+}
+
+static const char *title_font_path(void)
+{
+    static char buf[1024];
+    const char *env = getenv("MICHACKA_TITLE_FONT");
+    if (env && access(env, R_OK) == 0) return env;
+    const char *home = getenv("HOME");
+    if (home) {
+        snprintf(buf, sizeof(buf), "%s/.fonts/gomotor.ttf", home);
+        if (access(buf, R_OK) == 0) return buf;
+        snprintf(buf, sizeof(buf), "%s/.local/share/fonts/gomotor.ttf", home);
+        if (access(buf, R_OK) == 0) return buf;
+        snprintf(buf, sizeof(buf), "%s/src/gomotor/GoMotor.ttf", home);
+        if (access(buf, R_OK) == 0) return buf;
+    }
+    snprintf(buf, sizeof(buf), "/usr/share/fonts/truetype/gomotor/gomotor.ttf");
+    if (access(buf, R_OK) == 0) return buf;
+    return NULL;
+}
+
+static void render_slides(const Cfg *cfg, const SlidePlan *sp)
+{
+    char out[700], qout[760], mix[700], qmix[760];
+    snprintf(out, sizeof(out), "%s_slides.mp4", cfg->out_prefix);
+    sh_quote(qout, sizeof(qout), out);
+    snprintf(mix, sizeof(mix), "%s_mix.wav", cfg->out_prefix);
+    sh_quote(qmix, sizeof(qmix), mix);
+
+    SlideEncode enc = slide_encode_config(cfg->slide_max_mb, sp->total);
+
+    int nin = 0, ncap = 0;
+    char **ins = NULL;
+    int *imap = xmalloc(sizeof(int) * (size_t)sp->n);
+    for (int i = 0; i < sp->n; i++) {
+        int j = 0;
+        for (; j < nin; j++)
+            if (strcmp(ins[j], sp->v[i].path) == 0) break;
+        if (j == nin) {
+            push_path(&ins, &nin, &ncap, xstrdup(sp->v[i].path));
+            imap[i] = nin - 1;
+        } else {
+            imap[i] = j;
+        }
+    }
+
+    const char *tt = NULL;
+    char tn[32];
+    const char *font = title_font_path();
+    if (font) {
+        tt = tn;
+        if (!title_text(tn, sizeof(tn), time(NULL)))
+            tt = NULL;
+    }
+
+    char *base = xmalloc(CMDFULL_CAP);
+    size_t off = 0;
+    cat_cmd(base, CMDFULL_CAP, &off, "ffmpeg -v error -y");
+    for (int i = 0; i < nin; i++) {
+        char q[2100];
+        sh_quote(q, sizeof(q), ins[i]);
+        cat_cmd(base, CMDFULL_CAP, &off, " -i %s", q);
+    }
+    cat_cmd(base, CMDFULL_CAP, &off, " -i %s", qmix);
+
+    cat_cmd(base, CMDFULL_CAP, &off, " -filter_complex \"");
+    for (int i = 0; i < sp->n; i++)
+        cat_cmd(base, CMDFULL_CAP, &off,
+                "[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,"
+                "zoompan=z='1':d=%d:s=%dx%d:fps=%d,setsar=1,format=yuv420p[vs%d];",
+                imap[i], enc.w, enc.h, enc.w, enc.h, SLIDE_MAX_FRAMES,
+                enc.w, enc.h, SLIDE_FPS, i);
+    cat_cmd(base, CMDFULL_CAP, &off, "[vs0]");
+    for (int i = 1; i < sp->n; i++)
+        cat_cmd(base, CMDFULL_CAP, &off, "[vs%d]", i);
+    cat_cmd(base, CMDFULL_CAP, &off, "concat=n=%d:v=1:a=0,format=yuv420p[vout]", sp->n);
+    if (tt && font)
+        cat_cmd(base, CMDFULL_CAP, &off,
+                ";[vout]drawtext=fontfile='%s':text='%s':fontsize=%d:fontcolor=white:"
+                "borderw=3:bordercolor=black@0.6:x=(w-text_w)/2:y=(h-text_h)/2"
+                ":alpha='if(lt(t,0.5),t/0.5,if(lt(t,3.2),1,if(lt(t,3.8),(3.8-t)/0.6,0)))'[vt]",
+                font, tt, (int)(enc.h * 0.13));
+    else
+        cat_cmd(base, CMDFULL_CAP, &off, ";[vout]null[vt]");
+    cat_cmd(base, CMDFULL_CAP, &off, "\"");
+
+    char *cmd = xmalloc(CMDFULL_CAP);
+    if (enc.vkbps > 0) {
+        char plog[820], qplog[880], p1[820], qp1[880];
+        snprintf(plog, sizeof(plog), "/tmp/opencode/michacka_%s_pass", path_tail(cfg->out_prefix));
+        sh_quote(qplog, sizeof(qplog), plog);
+        snprintf(p1, sizeof(p1), "/tmp/opencode/michacka_%s_pass1.mp4", path_tail(cfg->out_prefix));
+        sh_quote(qp1, sizeof(qp1), p1);
+        snprintf(cmd, CMDFULL_CAP, "%s", base);
+        off = strlen(cmd);
+        cat_cmd(cmd, CMDFULL_CAP, &off,
+                " -map [vt] -an -c:v libx264 -preset faster -b:v %dk -pass 1 "
+                "-passlogfile %s -t %.3f -y %s",
+                enc.vkbps, qplog, sp->total, qp1);
+        printf("=== rendering slides: %d photos, %.1f s (2-pass to fill ~%g MB) ===\n",
+               sp->n, sp->total, cfg->slide_max_mb);
+        fflush(stdout);
+        if (system(cmd) != 0) die("slides render pass 1 failed");
+        remove(p1);
+        snprintf(cmd, CMDFULL_CAP, "%s", base);
+        off = strlen(cmd);
+        cat_cmd(cmd, CMDFULL_CAP, &off,
+                " -map [vt] -map %d:a -c:v libx264 -preset faster -b:v %dk -maxrate %dk "
+                "-bufsize %dk -pass 2 -passlogfile %s -c:a aac -b:a %dk "
+                "-t %.3f -movflags +faststart %s",
+                nin, enc.vkbps, (int)(enc.vkbps * 1.1), enc.vkbps * 2, qplog,
+                enc.audio_kbps, sp->total, qout);
+        if (system(cmd) != 0) die("slides render pass 2 failed");
+    } else {
+        snprintf(cmd, CMDFULL_CAP, "%s", base);
+        off = strlen(cmd);
+        cat_cmd(cmd, CMDFULL_CAP, &off,
+                " -map [vt] -map %d:a -c:v libx264 -crf 19 -preset faster "
+                "-pix_fmt yuv420p -c:a aac -b:a 192k -t %.3f -movflags +faststart %s",
+                nin, sp->total, qout);
+        printf("=== rendering slides: %d photos, %.1f s ===\n", sp->n, sp->total);
+        fflush(stdout);
+        if (system(cmd) != 0) die("slides render failed");
+    }
+
+    for (int i = 0; i < nin; i++) free(ins[i]);
+    free(ins);
+    free(imap);
+    free(base);
+    free(cmd);
+    double d = ffprobe_duration_file(out);
+    if (d > 0) printf("%-40s %.1f s (%.1f min)\n", out, d, d / 60.0);
+}
+
+static int run_slides_only(const Cfg *cfg, int want)
+{
+    char mix[700];
+    snprintf(mix, sizeof(mix), "%s_mix.wav", cfg->out_prefix);
+    double total = ffprobe_duration_file(mix);
+    if (total <= 0.0) die("--slide-only needs an existing %s", mix);
+    PathList imgs = { 0 };
+    load_images(&imgs, cfg->img_dir, cfg->slide_days);
+    if (imgs.n == 0) return 0;
+    printf("=== slides only ===\n");
+    SlidePlan sp;
+    plan_slides(&sp, &imgs, want, total);
+    write_slide_plan(cfg, &sp);
+    if (!cfg->dry_run) render_slides(cfg, &sp);
+    printf("Done! Output: %s_slides.mp4 (photos %d, audio %s)\n", cfg->out_prefix, sp.n, mix);
+    slide_plan_free(&sp);
+    for (int i = 0; i < imgs.n; i++) free(imgs.v[i]);
+    free(imgs.v);
+    return 0;
 }
 
 static void expand_tilde(char *dst, size_t cap, const char *val)
@@ -873,7 +1273,8 @@ static void load_conf(Cfg *cfg)
         if (strcmp(key, "mus") == 0) cfg->mus_dir = xstrdup(exp);
         else if (strcmp(key, "fld") == 0) cfg->fld_dir = xstrdup(exp);
         else if (strcmp(key, "tj") == 0) snprintf(cfg->tj_path, sizeof(cfg->tj_path), "%s", exp);
-        else die("%s:%d: unknown key '%s' (expected mus|fld|tj)", path, ln, key);
+        else if (strcmp(key, "img") == 0) cfg->img_dir = xstrdup(exp);
+        else die("%s:%d: unknown key '%s' (expected mus|fld|img|tj)", path, ln, key);
     }
     fclose(fp);
 }
@@ -892,12 +1293,23 @@ static void usage(const char *prog)
             "  -l, --len DUR     per-movement length: 600 | 90s | 15min | \"1h 10min\"\n"
             "                    (style default; max 86400)\n"
             "  -o, --out PREFIX  output prefix (default michacka_<style>_<min>min)\n"
+            "  -s, --slide N     distinct photos in the rapid slideshow: 0 disables,\n"
+            "                    default uses every photo in the window (cycled to\n"
+            "                    fill the whole mix; each photo holds at most 7 frames)\n"
+            "  -d, --slide-days N  only photos from the last N days (default 14, 0=all)\n"
+            "  -m, --slide-mb MB  fill the slideshow mp4 to ~MB MB (2-pass VBR, auto\n"
+            "                    res/bitrate; hard cuts, no transitions between photos)\n"
+            "      --dense N      make the sound texture Nx denser (more layers per\n"
+            "                    movement, default 3, 1..8)\n"
+            "      --no-slide    no slideshow video\n"
+            "      --slide-only  slides for an existing <prefix>_mix.wav, no audio render\n"
             "  -n, --dry-run     plan + write EDLs only, no audio\n"
             "  -h, --help        this help\n"
             "\n"
             "Config ~/.config/michacka.conf (key=value):\n"
             "  mus=DIR           music library (default ~/recordings)\n"
             "  fld=DIR           field-recording library (default /mnt/data/recordings/field)\n"
+            "  img=DIR           photo library for slides (default ~/DCIM/Camera)\n"
             "  tj=PATH           tj renderer (default tj/ submodule; env MICHACKA_TJ wins)\n",
             prog);
 }
@@ -907,6 +1319,9 @@ int main(int argc, char *argv[])
     Cfg cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.style = ST_DAY;
+    cfg.slide = -1;
+    cfg.slide_days = 14;
+    cfg.dense = 3;
     snprintf(cfg.tj_path, sizeof(cfg.tj_path), "tj/tj");
 
     int pos = 0;
@@ -924,6 +1339,50 @@ int main(int argc, char *argv[])
         } else if (strcmp(a, "--out") == 0 || strcmp(a, "-o") == 0) {
             if (i + 1 >= argc) die("--out/-o requires a prefix");
             snprintf(cfg.out_prefix, sizeof(cfg.out_prefix), "%s", argv[++i]);
+        } else if (strcmp(a, "--slide") == 0 || strcmp(a, "-s") == 0) {
+            if (i + 1 >= argc) die("--slide/-s requires a value");
+            const char *sv = argv[i + 1];
+            char *end;
+            errno = 0;
+            long v = strtol(sv, &end, 10);
+            if (end == sv || *end != '\0' || v < 0 || v > 60)
+                die("--slide must be an integer 0..60");
+            cfg.slide = (int)v;
+            i++;
+        } else if (strcmp(a, "--no-slide") == 0) {
+            cfg.slide = 0;
+        } else if (strcmp(a, "--slide-mb") == 0 || strcmp(a, "-m") == 0) {
+            if (i + 1 >= argc) die("--slide-mb/-m requires a value");
+            const char *mv = argv[i + 1];
+            char *end;
+            errno = 0;
+            double v = strtod(mv, &end);
+            if (end == mv || *end != '\0' || v < 0.0 || v > 1000.0)
+                die("--slide-mb must be 0..1000 (max MB for the slideshow mp4)");
+            cfg.slide_max_mb = v;
+            i++;
+        } else if (strcmp(a, "--slide-days") == 0 || strcmp(a, "-d") == 0) {
+            if (i + 1 >= argc) die("--slide-days/-d requires a value");
+            const char *dv = argv[i + 1];
+            char *end;
+            errno = 0;
+            long v = strtol(dv, &end, 10);
+            if (end == dv || *end != '\0' || v < 0 || v > 3650)
+                die("--slide-days must be an integer 0..3650 (0 = all photos)");
+            cfg.slide_days = (int)v;
+            i++;
+        } else if (strcmp(a, "--dense") == 0) {
+            if (i + 1 >= argc) die("--dense requires a value");
+            const char *ev = argv[i + 1];
+            char *end;
+            errno = 0;
+            long v = strtol(ev, &end, 10);
+            if (end == ev || *end != '\0' || v < 1 || v > 8)
+                die("--dense must be an integer 1..8 (layer density multiplier)");
+            cfg.dense = (int)v;
+            i++;
+        } else if (strcmp(a, "--slide-only") == 0) {
+            cfg.slide_only = 1;
         } else if (strcmp(a, "--dry-run") == 0 || strcmp(a, "-n") == 0) {
             cfg.dry_run = 1;
         } else if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
@@ -965,6 +1424,13 @@ int main(int argc, char *argv[])
     }
     if (!cfg.fld_dir) cfg.fld_dir = "/mnt/data/recordings/field";
 
+    char home_img[1024];
+    if (!cfg.img_dir) {
+        const char *home = getenv("HOME");
+        snprintf(home_img, sizeof(home_img), "%s/DCIM/Camera", home ? home : ".");
+        cfg.img_dir = home_img;
+    }
+
     if (!cfg.out_prefix[0]) {
         int mins = (int)lround(cfg.parts * part_len / 60.0);
         snprintf(cfg.out_prefix, sizeof(cfg.out_prefix), "michacka_%s_%dmin",
@@ -978,11 +1444,14 @@ int main(int argc, char *argv[])
     rng_state = cfg.seed;
     for (int i = 0; i < 8; i++) rnd_next();
 
+    if (cfg.slide_only)
+        return run_slides_only(&cfg, cfg.slide >= 0 ? cfg.slide : -1);
+
     resolve_tj(&cfg);
 
     printf("=== michacka ===\n");
-    printf("style: %s | parts: %d x %.0f s | seed: %llu%s\n", st->name, cfg.parts,
-           part_len, (unsigned long long)cfg.seed, cfg.have_seed ? "" : " (auto)");
+    printf("style: %s | parts: %d x %.0f s | dense: %dx | seed: %llu%s\n", st->name, cfg.parts,
+           part_len, cfg.dense, (unsigned long long)cfg.seed, cfg.have_seed ? "" : " (auto)");
     printf("tj: %s\n", cfg.tj_path);
     printf("libraries:\n");
 
@@ -1013,10 +1482,10 @@ int main(int argc, char *argv[])
 
         Edl m;
         edl_init(&m);
-        int nb = layer_count(st, st->beds, st->nb, phase, p);
-        int nm = layer_count(st, st->motion, st->nm, phase, p);
-        int npp = layer_count(st, st->pulses, st->np, phase, p);
-        int nf = layer_count(st, st->fields, st->nfl, phase, p);
+        int nb = layer_count(st, st->beds, st->nb, phase, p) * cfg.dense;
+        int nm = layer_count(st, st->motion, st->nm, phase, p) * cfg.dense;
+        int npp = layer_count(st, st->pulses, st->np, phase, p) * cfg.dense;
+        int nf = layer_count(st, st->fields, st->nfl, phase, p) * cfg.dense;
 
         int budget = MAX_EDL_ENTRIES - 2;
         if (nb > budget) nb = budget;
@@ -1052,7 +1521,22 @@ int main(int argc, char *argv[])
     }
     write_plan_files(&cfg, music_edls, field_edls);
 
+    int do_slides = cfg.slide >= 0 ? cfg.slide : -1;
+
     if (cfg.dry_run) {
+        if (do_slides != 0) {
+            PathList imgs = { 0 };
+            load_images(&imgs, cfg.img_dir, cfg.slide_days);
+            if (imgs.n > 0) {
+                SlidePlan sp;
+                plan_slides(&sp, &imgs, do_slides, part_len * (double)cfg.parts);
+                write_slide_plan(&cfg, &sp);
+                printf("dry-run: slides plan written, no video rendered.\n");
+                slide_plan_free(&sp);
+            }
+            for (int i = 0; i < imgs.n; i++) free(imgs.v[i]);
+            free(imgs.v);
+        }
         printf("dry-run: EDLs written, no audio rendered.\n");
         return 0;
     }
@@ -1062,6 +1546,27 @@ int main(int argc, char *argv[])
     write_plan_files(&cfg, music_edls, field_edls);
 
     finish_mix(&cfg);
+
+    int rendered_slides = 0;
+    if (do_slides != 0) {
+        PathList imgs = { 0 };
+        load_images(&imgs, cfg.img_dir, cfg.slide_days);
+        if (imgs.n > 0) {
+            char mix[700];
+            snprintf(mix, sizeof(mix), "%s_mix.wav", cfg.out_prefix);
+            double total = ffprobe_duration_file(mix);
+            if (total <= 0.0) total = part_len * (double)cfg.parts;
+            SlidePlan sp;
+            plan_slides(&sp, &imgs, do_slides, total);
+            write_slide_plan(&cfg, &sp);
+            render_slides(&cfg, &sp);
+            rendered_slides = 1;
+            slide_plan_free(&sp);
+        }
+        for (int i = 0; i < imgs.n; i++) free(imgs.v[i]);
+        free(imgs.v);
+    }
+
     cleanup_parts(&cfg);
 
     for (int p = 0; p < cfg.parts; p++) {
@@ -1075,7 +1580,9 @@ int main(int argc, char *argv[])
     free(mus.v);
     free(fld.v);
 
-    printf("Done! Output: %s_mix.{wav,flac,mp3}\nReproduce with: ./michacka %s %llu\n",
-           cfg.out_prefix, st->name, (unsigned long long)cfg.seed);
+    printf("Done! Output: %s_mix.{wav,flac,mp3}", cfg.out_prefix);
+    if (rendered_slides) printf(" + %s_slides.mp4", cfg.out_prefix);
+    printf("\nReproduce with: ./michacka %s %llu\n",
+           st->name, (unsigned long long)cfg.seed);
     return 0;
 }

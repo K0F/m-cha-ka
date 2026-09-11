@@ -24,6 +24,18 @@ scan libraries → tj analyze → classify texture → plan movements → EDLs �
    and masters (`--master subtle`).
 5. **Finish** — lossless concat of all parts, FLAC/MP3 exports, duration
    check. Intermediate renders are deleted automatically.
+6. **Slides** — scans the photo library, keeps only photos from the last 14
+   days (override with `--slide-days`), sorts them by time of day (ignoring the
+   date, so a "day" plays dawn→night), and cuts a rapid hard-cut montage that
+   fills the whole mix: every photo is held for at most 7 frames (0.28 s at
+   25 fps), and when the window has fewer photos than the duration needs the
+   day-ordered pool cycles. `--slide N` caps the number of distinct photos
+   (default: all in the window); `--no-slide` / `--slide 0` disables. Cuts are
+   static — no transitions, fades, or zoom. `--slide-mb MB` fills a target mp4
+   size with a 2-pass VBR encode, choosing resolution/tier (720p, 1080p,
+   1440p) automatically. The video opens with a "Kof YY" title in the Gomotor
+   font (found in `~/.fonts`, `~/.local/share/fonts`, or `~/src/gomotor`;
+   override with `MICHACKA_TITLE_FONT`).
 
 Default runs are 10 minutes (one 600 s movement); `--parts N` extends a style
 into its full multi-movement arc, and `--len DUR` sets the per-movement
@@ -52,6 +64,7 @@ resolved in order: `$MICHACKA_CONF` → `$XDG_CONFIG_HOME/michacka.conf` →
 ```ini
 mus=~/recordings              # music library
 fld=/mnt/data/recordings/field  # field-recording library
+img=~/DCIM/Camera            # photo library for the slideshow
 tj=tj/tj                      # renderer; env MICHACKA_TJ overrides this line
 ```
 
@@ -68,6 +81,12 @@ The tj path resolves in order: `MICHACKA_TJ` env → conf → `tj/tj` submodule
 | `--parts N` | `-p N` | number of movements | style default |
 | `--len DUR` | `-l DUR` | per-movement length in seconds or `90s` / `15min` / `1h30m` | style default |
 | `--out PREFIX` | `-o PREFIX` | output file prefix | `michacka_<style>_<min>min` |
+| `--dense N` | | multiply every layer count by N (1–8); 2–3 layers "everything to hell" | 3 |
+| `--slide N` | `-s N` | cap distinct photos in the slideshow (`0`/`--no-slide` disables); default uses every photo in the window, montage fills the mix length | all in window |
+| `--slide-days N` | `-d N` | only photos from the last N days (`0` = all) | 14 |
+| `--slide-mb MB` | `-m MB` | 2-pass VBR fill the slideshow mp4 to MB MB | unlimited |
+| `--no-slide` | | no slideshow video | off |
+| `--slide-only` | | slides from an existing `<prefix>_mix.wav`, no audio render | off |
 | `--dry-run` | `-n` | write EDLs only, no audio | off |
 
 ### Styles
@@ -106,6 +125,10 @@ Quick smoke test without audio:
 ```sh
 ./michacka storm --parts 4 --seed 42 --dry-run --out demo
 ./michacka drift --parts 2 --len "45min"   # 2 x 45 min movements
+./michacka day --len 90s                   # ~90 s mix + rapid full-window slideshow
+./michacka day 42 --len 90s --slide-mb 10  # fill a ~10 MB mp4 with all recent photos
+./michacka --dense 2 --slide 25 --slide-mb 10  # denser (2x) mix, up to 25 photos
+./michacka --slide-only                   # render slides + mp4 for the last run's mix
 ```
 
 ## Output files
@@ -113,7 +136,9 @@ Quick smoke test without audio:
 Per run with prefix `P`, after automatic cleanup only these remain:
 
 - `P_partNN_{music,field}.edl` — human-readable plans, reusable as tj input
+- `P_slides.edl` — the slideshow plan (day-sorted photos, frames per slide)
 - `P_mix.{wav,flac,mp3}` — final concatenation and exports
+- `P_slides.mp4` — rapid-cut (7-frame, no-transition) montage muxed with the mix
 
 ## Requirements
 

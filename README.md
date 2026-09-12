@@ -64,7 +64,7 @@ resolved in order: `$MICHACKA_CONF` → `$XDG_CONFIG_HOME/michacka.conf` →
 ```ini
 mus=~/recordings              # music library
 fld=/mnt/data/recordings/field  # field-recording library
-img=~/DCIM/Camera            # photo library for the slideshow
+img=~/Dcim                   # photo library for the slideshow
 tj=tj/tj                      # renderer; env MICHACKA_TJ overrides this line
 ```
 

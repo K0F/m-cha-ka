@@ -898,6 +898,44 @@ static void load_images(PathList *pl, const char *dir, int days)
             printf("  slides: %d of %d images fall in the last %d day(s)\n",
                    pl->n, before, days);
     }
+    {
+        struct { const char *name; off_t size; } *seen = NULL;
+        int sn = 0, scap = 0, dupes = 0;
+        char **dst = NULL;
+        int dn = 0, dcap = 0;
+        for (int i = 0; i < pl->n; i++) {
+            struct stat si;
+            off_t sz = (off_t)-1;
+            const char *base = path_tail(pl->v[i]);
+            int skip = 0;
+            if (stat(pl->v[i], &si) == 0) sz = si.st_size;
+            for (int j = 0; j < sn; j++)
+                if (strcmp(seen[j].name, base) == 0 && seen[j].size == sz) {
+                    skip = 1;
+                    break;
+                }
+            if (skip) {
+                free(pl->v[i]);
+                dupes++;
+                continue;
+            }
+            if (sn == scap) {
+                scap = scap ? scap * 2 : 64;
+                seen = xrealloc(seen, (size_t)scap * sizeof(*seen));
+            }
+            seen[sn].name = base;
+            seen[sn].size = sz;
+            sn++;
+            push_path(&dst, &dn, &dcap, pl->v[i]);
+        }
+        free(pl->v);
+        pl->v = dst;
+        pl->n = dn;
+        pl->cap = dcap;
+        free(seen);
+        if (dupes > 0)
+            printf("  slides: %d duplicate copy(ies) dropped\n", dupes);
+    }
     if (pl->n == 0) {
         fprintf(stderr, "michacka: warning: no images found in %s, slides skipped\n", dir);
         return;
@@ -1315,7 +1353,7 @@ static void usage(const char *prog)
             "Config ~/.config/michacka.conf (key=value):\n"
             "  mus=DIR           music library (default ~/recordings)\n"
             "  fld=DIR           field-recording library (default /mnt/data/recordings/field)\n"
-            "  img=DIR           photo library for slides (default ~/DCIM/Camera)\n"
+            "  img=DIR           photo library for slides (default ~/Dcim)\n"
             "  tj=PATH           tj renderer (default tj/ submodule; env MICHACKA_TJ wins)\n",
             prog);
 }
@@ -1433,7 +1471,7 @@ int main(int argc, char *argv[])
     char home_img[1024];
     if (!cfg.img_dir) {
         const char *home = getenv("HOME");
-        snprintf(home_img, sizeof(home_img), "%s/DCIM/Camera", home ? home : ".");
+        snprintf(home_img, sizeof(home_img), "%s/Dcim", home ? home : ".");
         cfg.img_dir = home_img;
     }
 
